@@ -303,7 +303,7 @@ class PluginHostBackend(CaptureBackend):
         self.start()
         if restarted and self._last_load and msg.get("cmd") not in ("load", "names", "quit"):
             # The worker died earlier (crashing plugin): load the plugin again transparently.
-            self._call(dict(self._last_load), timeout=120)
+            self.info = self._call(dict(self._last_load), timeout=120)["info"]
         with self._call_lock:
             try:
                 with self._send_lock:

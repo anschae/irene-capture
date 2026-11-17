@@ -183,13 +183,24 @@ jobs:
           for p in $(find . -name "*.pkg" -maxdepth 4); do pkgutil --expand-full "$p" "${p%.pkg}_expanded" || true; done
           find . -maxdepth 10 | grep -iE "vst3$|\.pkg$|\.component$" | head -30
           P=$(find "$PWD" -maxdepth 10 -name 'DragonflyRoomReverb.vst3' | head -1)
-          if [ "$RUNNER_OS" = "Windows" ]; then P=$(cygpath -w "$P"); fi
+          E=$(find "$PWD" -maxdepth 10 -name 'DragonflyEarlyReflections.vst3' | head -1)
+          if [ "$RUNNER_OS" = "Windows" ]; then P=$(cygpath -w "$P"); E=$(cygpath -w "$E"); fi
           echo "VST3=$P" >> "$GITHUB_ENV"
+          echo "VST3_LTI=$E" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Load with plain Python (not frozen), for comparison
+        run: |
+          pip install -q pedalboard
+          python -c "import pedalboard,sys; p=pedalboard.load_plugin(sys.argv[1]); print('plain python OK:', p.name, p.reported_latency_samples)" "$VST3" || echo "plain python load FAILED"
       - name: Spike (frozen app)
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then APP=$(find artifact -name irene-capture.exe | head -1)
           elif [ "$RUNNER_OS" = "macOS" ]; then APP=$(find artifact -path "*irene-capture.app/Contents/MacOS/irene-capture" | head -1)
-          else APP=$(find artifact -type f -name irene-capture | head -1); chmod +x "$APP"; fi
+          else APP=$(find artifact -type f -name irene-capture | head -1); fi
+          # download-artifact unpacks our zip itself and drops the executable bits (users get the real zip)
+          if [ "$RUNNER_OS" != "Windows" ]; then chmod +x "$APP"; fi
           echo "App: $APP"
           to() { if command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi; }
           echo "APP=$APP" >> "$GITHUB_ENV"
@@ -198,10 +209,10 @@ jobs:
           set +e
           if [ "$RUNNER_OS" = "Windows" ]; then
             pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','spike.txt','spike-editor','--plugin','\"$VST3\"','--seconds','4') -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(180000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content spike.txt; exit \$p.ExitCode"; E=$?
-            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','cap.txt','plugin-capture','--plugin','\"$VST3\"','--type','reverb','--ir-length','2','--editor-seconds','3','--out-dir','out') -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(240000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content cap.txt; exit \$p.ExitCode"; C=$?
+            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','cap.txt','plugin-capture','--plugin','\"$VST3_LTI\"','--type','reverb','--ir-length','2','--editor-seconds','3','--out-dir','out') -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(240000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content cap.txt; exit \$p.ExitCode"; C=$?
           else
             to 180 "$APP" spike-editor --plugin "$VST3" --seconds 4; E=$?
-            to 240 "$APP" plugin-capture --plugin "$VST3" --type reverb --ir-length 2 --editor-seconds 3 --out-dir out; C=$?
+            to 240 "$APP" plugin-capture --plugin "$VST3_LTI" --type reverb --ir-length 2 --editor-seconds 3 --out-dir out; C=$?
           fi
           ls -la out || true
           echo "editor exit=$E capture exit=$C"

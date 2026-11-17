@@ -73,5 +73,6 @@ def test_recovers_after_worker_crash():
         # next call restarts the worker and reloads the plugin transparently
         res = h.capture_and_analyze(session("eq"))
         assert res.ok and res.rating == "excellent"
+        assert res.plugin_info["name"] == "Gain" and h.crashes == 0
     finally:
         h.stop()
