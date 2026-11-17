@@ -39,6 +39,9 @@ class CaptureResult:
     noise_floor_dbfs: float | None = None  # in the rendered pre-roll
     hints: list[str] = field(default_factory=list)
     plugin_info: dict = field(default_factory=dict)
+    attachments: dict[str, bytes] = field(default_factory=dict)  # file suffix -> bytes, written next to the IR
+    rendered_to_save: object | None = None  # RenderedAudio to save as <name>_rendered.wav (direct route)
+    written: list[Path] = field(default_factory=list)
 
     @property
     def sample_rate(self) -> int:

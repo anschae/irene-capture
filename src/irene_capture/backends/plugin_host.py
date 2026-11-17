@@ -392,20 +392,25 @@ class PluginHostBackend(CaptureBackend):
         result.plugin_info = dict(self.info)
         return result
 
-    def save_state(self, ir_path: Path) -> list[Path]:
-        """Save the plugin state next to the IR, if the plugin exposes it."""
+    def state_attachments(self) -> dict[str, bytes]:
+        """Plugin state as files to write next to the IR (``.vstpreset`` for VST3, raw state)."""
         try:
             st = self.state()
         except PluginError:
-            return []
-        out = []
-        stem = Path(ir_path).with_suffix("")
+            return {}
+        out = {}
         if st.get("preset_data") and self.info.get("format") == "VST3":
-            p = stem.with_name(stem.name + "_plugin.vstpreset")
-            p.write_bytes(st["preset_data"])
-            out.append(p)
+            out["_plugin.vstpreset"] = st["preset_data"]
         if st.get("raw_state"):
-            p = stem.with_name(stem.name + "_plugin_state.bin")
-            p.write_bytes(st["raw_state"])
+            out["_plugin_state.bin"] = st["raw_state"]
+        return out
+
+    def save_state(self, ir_path: Path) -> list[Path]:
+        """Save the plugin state next to the IR, if the plugin exposes it."""
+        stem = Path(ir_path).with_suffix("")
+        out = []
+        for suffix, data in self.state_attachments().items():
+            p = stem.with_name(stem.name + suffix)
+            p.write_bytes(data)
             out.append(p)
         return out

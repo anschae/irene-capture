@@ -13,7 +13,7 @@ import numpy as np
 from .. import TOOL_NAME, __version__
 from .audio_io import write_audio
 from .checks import Severity
-from .presets import PRESETS, StereoMode, TrueStereoOutput
+from .presets import PRESETS, BitDepth, StereoMode, TrueStereoOutput
 from .result import CaptureResult
 
 
@@ -86,9 +86,20 @@ def write_outputs(result: CaptureResult, out_dir: str | Path | None = None, base
     else:
         write_audio(irs[0], result.ir_channels().T, result.sample_rate, result.ir_bit_depth, comment, software)
         files.ir_files.append(irs[0])
+    stem = js.with_suffix("")
+    for suffix, data in result.attachments.items():
+        p = stem.with_name(stem.name + suffix)
+        p.write_bytes(data)
+        files.extra.append(p)
+    if result.rendered_to_save is not None:
+        r = result.rendered_to_save
+        p = stem.with_name(stem.name + "_rendered.wav")
+        write_audio(p, r.data, r.sample_rate, BitDepth.FLOAT32, comment, software)
+        files.extra.append(p)
     js.write_text(json.dumps(report_dict(result, files), indent=2, ensure_ascii=False), encoding="utf-8")
     txt.write_text(report_text(result, files), encoding="utf-8")
     files.json_file, files.txt_file = js, txt
+    result.written = files.all
     return files
 
 
@@ -108,8 +119,9 @@ def report_dict(result: CaptureResult, files: OutputFiles | None = None) -> dict
         "short_id": s.short_id,
         "session_tool_version": s.tool_version,
         "source": str(result.source_path) if result.source_path else result.source_name,
-        "plugin": result.plugin_info or None,
+        "plugin": {k: v for k, v in result.plugin_info.items() if isinstance(v, (str, int, float, bool))} or None,
         "ir_files": [p.name for p in files.ir_files] if files else [],
+        "other_files": [p.name for p in files.extra] if files else [],
         "settings": s.settings.to_dict(),
         "effective": {
             "trim_latency": result.trim_latency,

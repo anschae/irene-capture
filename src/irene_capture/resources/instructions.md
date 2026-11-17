@@ -42,7 +42,7 @@ Format:
    - **Mono Downmix: {mono_downmix}**
 ?absolute   - With Mono Downmix, Cubase applies the stereo pan law; with the pan law at 0 dB the level stays exact.
    - **Real-Time Export: off**
-   Choose a name and folder, then click **Export Audio**.
+   - Choose a name and folder, then click **Export Audio**.
 7. *Alternative:* **Edit → Render in Place** (Render Settings: "Channel Settings", tail 0 — the test file already contains the tail). The file ends up in the project's Audio folder.
 8. Import the exported file into irene-capture ("Import rendered file(s)…" or drag and drop).
 
@@ -61,6 +61,6 @@ Format:
    - File type: **Interleaved**
    - Dither: **None**
    - "Include Audio Tail" can stay on
-?mono   Logic bounces in stereo unless the output channel strip is mono; irene-capture converts identical channels to mono automatically.
+?mono   - Logic bounces in stereo unless the output channel strip is mono; irene-capture converts identical channels to mono automatically.
 7. *Alternative:* **Bounce in Place** (Ctrl+B) with Normalize **off**. The file ends up in the project's Audio Files folder.
 8. Import the bounced file into irene-capture ("Import rendered file(s)…" or drag and drop).
