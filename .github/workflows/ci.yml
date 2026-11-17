@@ -143,6 +143,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
+          export PYTHONUNBUFFERED=1
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get install -y xvfb openbox > /dev/null
             Xvfb :99 -screen 0 1280x1024x24 & sleep 2; export DISPLAY=:99; openbox & sleep 1

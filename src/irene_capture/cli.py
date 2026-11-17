@@ -205,6 +205,7 @@ def cmd_spike_editor(a: argparse.Namespace) -> int:
         try:
             info = host.load(a.plugin, a.plugin_name)
             print(f"Loaded {info['name']}; editor: {info.get('has_editor')}")
+            print("Opening the editor…")
             res = host.show_editor(auto_close_s=a.seconds)
             print(f"Editor opened and closed: {res.get('ok')}")
             # the host must still work after the editor
@@ -275,6 +276,11 @@ class _Tee:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)  # output survives if the process is killed
+        except (AttributeError, ValueError):
+            pass
     args = build_parser().parse_args(argv)
     log = open(args.log, "w", encoding="utf-8") if args.log else None  # noqa: SIM115
     old_out, old_err = sys.stdout, sys.stderr

@@ -278,6 +278,7 @@ class PluginTab(QWidget):
         self.page = page
         self.host = None
         self.editor_open = False
+        self.pending_capture = False
 
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter plugins…")
@@ -467,6 +468,9 @@ class PluginTab(QWidget):
             self.editor_open = False
             self.editor_btn.setText("Open editor")
             self.status.emit("Plugin editor closed.")
+            if self.pending_capture:
+                self.pending_capture = False
+                self.capture()
 
         def failed(exc, tb):
             self.editor_open = False
@@ -493,7 +497,12 @@ class PluginTab(QWidget):
             QMessageBox.warning(self, "Settings", "Please fix the settings marked in red on the Setup page first.")
             return
         if self.editor_open:
+            # Close the editor first; the capture starts when it is closed. Some plugins ignore the
+            # request to close (seen on macOS), then the user closes the window.
+            self.pending_capture = True
             self.host.close_editor()
+            self.status.emit("Closing the plugin editor… If its window stays open, close it to start the capture.")
+            return
         settings = setup.settings()
         settings.capture_name = self.name.text().strip()
         session = create_session(settings, source="plugin")
