@@ -151,10 +151,15 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           path: artifact
+          pattern: "*-${{ matrix.platform }}.zip"
           merge-multiple: true
       - name: Unpack app
         run: |
-          cd artifact && unzip -q *-${{ matrix.platform }}.zip && ls -la
+          cd artifact
+          find . -maxdepth 3 | head -20
+          Z=$(find . -type f -name "*.zip" | head -1)
+          if [ -n "$Z" ]; then unzip -q -o "$Z"; fi
+          find . -maxdepth 4 \( -name "irene-capture.exe" -o -name "irene-capture" \) | head
       - name: Linux display
         if: runner.os == 'Linux'
         run: |
@@ -171,7 +176,10 @@ jobs:
           echo "VST3=$P" >> "$GITHUB_ENV"
       - name: Spike (frozen app)
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then APP=artifact/irene-capture.exe; elif [ "$RUNNER_OS" = "macOS" ]; then APP=artifact/irene-capture.app/Contents/MacOS/irene-capture; else APP=artifact/irene-capture; chmod +x $APP; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then APP=$(find artifact -name irene-capture.exe | head -1)
+          elif [ "$RUNNER_OS" = "macOS" ]; then APP=$(find artifact -path "*irene-capture.app/Contents/MacOS/irene-capture" | head -1)
+          else APP=$(find artifact -type f -name irene-capture | head -1); chmod +x "$APP"; fi
+          echo "App: $APP"
           echo "APP=$APP" >> "$GITHUB_ENV"
           echo "::group::list"; "$APP" --log l.txt list-plugins plugins || true; sleep 2; cat l.txt || true; echo "::endgroup::"
           echo "Plugin: $VST3"
