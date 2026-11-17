@@ -137,12 +137,27 @@ Results (Nov 2026, pedalboard 0.9.26, PySide6 6.x, PyInstaller 6.x):
 The plugin host survives crashes (reloads the plugin on the next action) and kills workers
 that don't answer within the timeout.
 
+**Owner's first test on Windows 10 (17 Nov 2026), and what changed:**
+* Neural DSP Gojira (old version) worked. Gojira X did not finish loading within 120 s.
+* Another plugin produced a PyInstaller "Unhandled exception in script" dialog from the
+  worker: BrokenPipeError while sending a reply, then `sys.stderr` was None. Cause: in a
+  one-file Windows build `multiprocessing.Process` is the *bootloader*; killing it (timeout)
+  left the real worker running, which later wrote to the closed pipe.
+* Fixes: the worker says hello with its real PID and the parent kills that PID; the parent
+  closes its pipe ends, and the worker's reader thread calls `os._exit(0)` on EOF; every send
+  is guarded; stdout/stderr and `faulthandler` go to `plugin-host.log` in the config folder
+  (Help → Open log folder); VST3 bundles are tried as bundle first, the inner module only
+  after a "scan failure"; the GUI ignores a second Load while one is running.
+* Still open: why Gojira X hangs. Ask the owner for `plugin-host.log` after the next try.
+
 ## Known issues / ideas
 
 * The plugin editor window opens from a separate process, so it may appear behind the main
   window (and on macOS the worker shows its own Dock icon while the editor is open); it has
   its own close button.
 * A worker that hangs is killed after the timeout (load 120 s, state 60 s, processing 600 s).
+  Config folder (sessions index, plugin-host.log): `%APPDATA%\irene-capture`,
+  `~/Library/Application Support/irene-capture`, `~/.config/irene-capture`.
 * Plugins that need a running host transport/tempo or sidechain can't be captured directly.
 * IRene has no true-stereo mode; a separate task in the IRene repo if wanted.
 * Hardware capture (v2): see docs/ARCHITECTURE.md.

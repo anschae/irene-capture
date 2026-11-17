@@ -31,6 +31,7 @@ from ..core.signals import render_test_signal
 from .base import CaptureBackend
 
 WARMUP_S = 1.0
+LOAD_TIMEOUT_S = 120.0
 DETERMINISM_LIMIT_DB = -100.0
 
 STANDARD_FOLDERS = {
@@ -80,26 +81,37 @@ def scan_plugins(extra_folders: list[Path] | None = None, max_depth: int = 4) ->
     return found
 
 
-def resolve_plugin_path(path: str) -> str:
-    """The path to give to pedalboard.
+def plugin_path_candidates(path: str) -> list[str]:
+    """Paths to try with pedalboard, in order.
 
-    On Windows, pedalboard (0.9.x) can't scan VST3 *bundle folders* ("unsupported plugin format
-    or scan failure"), but it loads the module inside the bundle
-    (``X.vst3/Contents/x86_64-win/X.vst3``). Found in the CI plugin spike with Dragonfly Reverb
-    and Surge XT.
+    On Windows, pedalboard (0.9.x) often can't scan VST3 *bundle folders* ("unsupported plugin
+    format or scan failure"), but loads the module inside the bundle
+    (``X.vst3/Contents/x86_64-win/X.vst3``) — found in the CI plugin spike with Dragonfly
+    Reverb and Surge XT. Some plugins may need the bundle path, so it is tried first.
     """
     p = Path(path)
     if sys.platform != "win32" or not p.is_dir() or p.suffix.lower() != ".vst3":
-        return path
+        return [path]
     import platform
 
     arch = {"amd64": "x86_64-win", "x86_64": "x86_64-win", "arm64": "arm64x-win"}.get(platform.machine().lower(),
                                                                                        "x86_64-win")
-    candidates = [p / "Contents" / arch / p.name, *sorted((p / "Contents").glob("*-win/*.vst3"))]
-    for c in candidates:
-        if c.is_file():
-            return str(c)
-    return path
+    out = [path]
+    for c in [p / "Contents" / arch / p.name, *sorted((p / "Contents").glob("*-win/*.vst3"))]:
+        if c.is_file() and str(c) not in out:
+            out.append(str(c))
+    return out
+
+
+def resolve_plugin_path(path: str) -> str:
+    """The module inside a Windows VST3 bundle (or ``path`` itself)."""
+    c = plugin_path_candidates(path)
+    return c[1] if len(c) > 1 else c[0]
+
+
+def _is_scan_failure(e: Exception) -> bool:
+    low = str(e).lower()
+    return "scan failure" in low or "unsupported plugin format" in low
 
 
 # --- worker side ---------------------------------------------------------------------------
@@ -173,9 +185,82 @@ def _process(plugin, audio: np.ndarray, sr: float, warmup: int) -> np.ndarray:
     return y[:audio.shape[0]]
 
 
-def worker_main(cmd_conn, res_conn) -> None:  # pragma: no cover - runs in the child process
+def worker_main(cmd_conn, res_conn, log_path: str | None = None) -> None:  # pragma: no cover - child process
+    """The plugin host process. Never raises: a broken pipe means the app is gone, so it just exits."""
+    import faulthandler
+    import os
+    import time
+
+    log = None
+    if log_path:
+        try:
+            log = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+            # A windowed build has no stdout/stderr; send everything (and native crash dumps) to the log.
+            sys.stdout = sys.stderr = log
+            faulthandler.enable(log)
+        except OSError:
+            log = None
+    if sys.stdout is None or sys.stderr is None:
+        sys.stdout = sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+
+    def note(text: str) -> None:
+        if log:
+            log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{os.getpid()}] {text}\n")
+
+    def send(obj) -> None:
+        try:
+            res_conn.send(obj)
+        except (BrokenPipeError, EOFError, OSError):
+            note("app is gone (pipe closed); exiting")
+            os._exit(0)
+
+    try:
+        _worker_loop(cmd_conn, send, note)
+    except BaseException as e:  # never show an "unhandled exception" dialog from the worker
+        note(f"worker failed: {e!r}\n{traceback.format_exc()}")
+        os._exit(1)
+    os._exit(0)
+
+
+def _load_external(pedalboard, path: str, name: str | None, note) -> object:
+    kwargs = {"plugin_name": name} if name else {}
+    errors = []
+    for candidate in plugin_path_candidates(path):
+        note(f"load {candidate!r} {kwargs}")
+        try:
+            plugin = pedalboard.load_plugin(candidate, **kwargs)
+            note("load ok")
+            return plugin
+        except Exception as e:
+            note(f"load failed: {e}")
+            errors.append(e)
+            if not _is_scan_failure(e):
+                break
+    raise errors[-1]
+
+
+def _plugin_names(pedalboard, path: str, note) -> list[str]:
+    cls = pedalboard.VST3Plugin if path.lower().endswith(".vst3") else pedalboard.AudioUnitPlugin
+    err = None
+    for candidate in plugin_path_candidates(path):
+        note(f"names {candidate!r}")
+        try:
+            return list(cls.get_plugin_names_for_file(candidate))
+        except Exception as e:
+            note(f"names failed: {e}")
+            err = e
+            if not _is_scan_failure(e):
+                break
+    raise err
+
+
+def _worker_loop(cmd_conn, send, note) -> None:  # pragma: no cover - child process
+    import os
+
+    note(f"worker started (python {sys.version.split()[0]})")
     import pedalboard
 
+    note(f"pedalboard {pedalboard.__version__}")
     inbox: queue.Queue = queue.Queue()
     editor_event: list[threading.Event | None] = [None]
 
@@ -184,8 +269,10 @@ def worker_main(cmd_conn, res_conn) -> None:  # pragma: no cover - runs in the c
             try:
                 msg = cmd_conn.recv()
             except (EOFError, OSError):
-                inbox.put({"cmd": "quit"})
-                return
+                # The app closed the pipe (quit, timeout or crash). Leave at once, even if the main
+                # thread is stuck inside a plugin.
+                note("command pipe closed; exiting")
+                os._exit(0)
             if msg.get("cmd") == "close_editor":
                 ev = editor_event[0]
                 if ev is not None:
@@ -194,35 +281,34 @@ def worker_main(cmd_conn, res_conn) -> None:  # pragma: no cover - runs in the c
             inbox.put(msg)
 
     threading.Thread(target=reader, daemon=True).start()
+    send({"ok": True, "hello": os.getpid()})
     plugin = None
     path = ""
     while True:
         msg = inbox.get()
         cmd = msg.get("cmd")
+        if cmd != "process":
+            note(f"command {cmd}")
         try:
             if cmd == "quit":
-                res_conn.send({"ok": True})
+                send({"ok": True})
                 return
             if cmd == "names":
-                names = list(pedalboard.VST3Plugin.get_plugin_names_for_file(msg["path"])) \
-                    if msg["path"].lower().endswith(".vst3") else \
-                    list(pedalboard.AudioUnitPlugin.get_plugin_names_for_file(msg["path"]))
-                res_conn.send({"ok": True, "names": names})
+                send({"ok": True, "names": _plugin_names(pedalboard, msg["path"], note)})
             elif cmd == "load":
                 path = msg["path"]
                 if path.startswith("builtin:"):
                     plugin = _make_builtin(path)
                 else:
-                    kwargs = {"plugin_name": msg["name"]} if msg.get("name") else {}
-                    plugin = pedalboard.load_plugin(resolve_plugin_path(path), **kwargs)
+                    plugin = _load_external(pedalboard, path, msg.get("name"), note)
                     if getattr(plugin, "is_instrument", False) and not getattr(plugin, "is_effect", True):
                         raise PluginError("This is an instrument, not an effect.")
-                res_conn.send({"ok": True, "info": _plugin_info(plugin, path)})
+                send({"ok": True, "info": _plugin_info(plugin, path)})
             elif plugin is None:
-                res_conn.send({"ok": False, "error": "No plugin loaded."})
+                send({"ok": False, "error": "No plugin loaded."})
             elif cmd == "show_editor":
                 if not hasattr(type(plugin), "show_editor"):
-                    res_conn.send({"ok": False, "error": "This plugin has no editor."})
+                    send({"ok": False, "error": "This plugin has no editor."})
                     continue
                 ev = threading.Event()
                 editor_event[0] = ev
@@ -230,16 +316,17 @@ def worker_main(cmd_conn, res_conn) -> None:  # pragma: no cover - runs in the c
                     threading.Timer(float(msg["auto_close_s"]), ev.set).start()
                 plugin.show_editor(ev)
                 editor_event[0] = None
-                res_conn.send({"ok": True, "info": _plugin_info(plugin, path)})
+                note("editor closed")
+                send({"ok": True, "info": _plugin_info(plugin, path)})
             elif cmd == "process":
                 y = _process(plugin, msg["audio"], msg["sr"], int(msg.get("warmup", 0)))
-                res_conn.send({"ok": True, "audio": y, "latency": _plugin_info(plugin, path)["latency"]})
+                send({"ok": True, "audio": y, "latency": _plugin_info(plugin, path)["latency"]})
             elif cmd == "params":
-                res_conn.send({"ok": True, "params": _params(plugin)})
+                send({"ok": True, "params": _params(plugin)})
             elif cmd == "set_param":
                 plugin.parameters[msg["key"]].raw_value = float(msg["raw_value"])
                 p = plugin.parameters[msg["key"]]
-                res_conn.send({"ok": True, "text": str(getattr(p, "string_value", ""))})
+                send({"ok": True, "text": str(getattr(p, "string_value", ""))})
             elif cmd == "state":
                 state = {"ok": True}
                 for attr in ("raw_state", "preset_data"):
@@ -249,11 +336,12 @@ def worker_main(cmd_conn, res_conn) -> None:  # pragma: no cover - runs in the c
                             state[attr] = bytes(v)
                     except Exception:
                         pass
-                res_conn.send(state)
+                send(state)
             else:
-                res_conn.send({"ok": False, "error": f"unknown command {cmd}"})
+                send({"ok": False, "error": f"unknown command {cmd}"})
         except Exception as e:
-            res_conn.send({"ok": False, "error": _explain(e, path), "trace": traceback.format_exc()})
+            note(f"error: {e!r}")
+            send({"ok": False, "error": _explain(e, path), "trace": traceback.format_exc()})
 
 
 def _explain(e: Exception, path: str) -> str:
@@ -287,19 +375,75 @@ class PluginHostBackend(CaptureBackend):
         self.last_determinism: CheckResult | None = None
         self.last_rendered: RenderedAudio | None = None
         self._last_load: dict | None = None
+        self._worker_pid: int | None = None
         self.crashes = 0
+        from ..paths import config_dir
+
+        self.log_path = config_dir() / "plugin-host.log"
 
     # lifecycle
     def start(self) -> None:
         if self._proc is not None and self._proc.is_alive():
             return
+        self._close_pipes()
+        try:  # keep the log small: start a new one above 1 MB
+            if self.log_path.exists() and self.log_path.stat().st_size > 1_000_000:
+                self.log_path.replace(self.log_path.with_suffix(".old.log"))
+        except OSError:
+            pass
         ctx = mp.get_context("spawn")
         cmd_r, cmd_w = ctx.Pipe(duplex=False)
         res_r, res_w = ctx.Pipe(duplex=False)
-        self._proc = ctx.Process(target=worker_main, args=(cmd_r, res_w), daemon=True, name="irene-plugin-host")
+        self._proc = ctx.Process(target=worker_main, args=(cmd_r, res_w, str(self.log_path)), daemon=True,
+                                 name="irene-plugin-host")
         self._proc.start()
+        cmd_r.close()  # the parent keeps only its own ends, so the worker sees EOF when we close ours
+        res_w.close()
         self._cmd, self._res = cmd_w, res_r
         self.info = {}
+        # The worker says hello with its own process ID. In a one-file Windows build the Process
+        # object is the bootloader, and the real worker is its child: killing it needs this PID.
+        self._worker_pid = None
+        waited = 0.0
+        while not self._res.poll(0.25):
+            waited += 0.25
+            if not self._proc.is_alive() or waited > 120:
+                self._kill()
+                raise PluginHostCrashed(
+                    f"The plugin host could not be started. Details are in {self.log_path}.")
+        try:
+            self._worker_pid = int(self._res.recv().get("hello"))
+        except (EOFError, OSError, TypeError, ValueError) as e:
+            self._kill()
+            raise PluginHostCrashed(f"The plugin host could not be started. Details are in {self.log_path}.") from e
+
+    def _close_pipes(self) -> None:
+        for conn in (self._cmd, self._res):
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+        self._cmd = self._res = None
+
+    def _kill(self) -> None:
+        """Stop the worker for sure (also the real worker behind a one-file bootloader)."""
+        import os
+        import signal
+
+        pid = getattr(self, "_worker_pid", None)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL)
+            except OSError:
+                pass
+        if self._proc is not None:
+            if self._proc.is_alive():
+                self._proc.kill()
+            self._proc.join(3)
+        self._close_pipes()  # the worker's reader sees EOF and exits, should it still run
+        self._proc = None
+        self._worker_pid = None
 
     def stop(self) -> None:
         if self._proc is None:
@@ -307,16 +451,22 @@ class PluginHostBackend(CaptureBackend):
         try:
             with self._send_lock:
                 self._cmd.send({"cmd": "quit"})
-            self._proc.join(2)
-        except (OSError, EOFError, BrokenPipeError):
+            self._proc.join(3)
+        except (OSError, EOFError, BrokenPipeError, AttributeError):
             pass
-        if self._proc.is_alive():
-            self._proc.terminate()
-            self._proc.join(2)
-        self._proc = None
+        self._kill()
 
     def kill_worker(self) -> None:
         """Stop a stuck worker immediately (a running call then raises PluginHostCrashed)."""
+        import os
+        import signal
+
+        pid = getattr(self, "_worker_pid", None)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL)
+            except OSError:
+                pass
         if self._proc is not None and self._proc.is_alive():
             self._proc.kill()
 
@@ -336,7 +486,7 @@ class PluginHostBackend(CaptureBackend):
         self.start()
         if restarted and self._last_load and msg.get("cmd") not in ("load", "names", "quit"):
             # The worker died earlier (crashing plugin): load the plugin again transparently.
-            self.info = self._call(dict(self._last_load), timeout=120)["info"]
+            self.info = self._call(dict(self._last_load), timeout=LOAD_TIMEOUT_S)["info"]
         with self._call_lock:
             try:
                 with self._send_lock:
@@ -345,27 +495,27 @@ class PluginHostBackend(CaptureBackend):
                 while not self._res.poll(0.25):
                     waited += 0.25
                     if not self._proc.is_alive():
-                        self._proc = None
+                        self._kill()
                         self.crashes += 1
                         raise PluginHostCrashed(
                             "The plugin crashed the plugin host. irene-capture itself is fine; load the plugin "
-                            "again (or try the DAW route if it keeps crashing).")
+                            f"again (or use the DAW route if it keeps crashing). Details: {self.log_path}")
                     if timeout is not None and waited > timeout:
                         # stop the stuck worker, so it doesn't keep a CPU core busy; the next
                         # action starts a new one (and reloads the plugin)
-                        self._proc.kill()
-                        self._proc.join(2)
-                        self._proc = None
+                        self._kill()
                         raise PluginError(
-                            f"The plugin did not respond within {timeout:.0f} s and was stopped. Try again, or "
-                            "use the DAW route for this plugin.")
+                            f"The plugin did not respond within {timeout:.0f} s and was stopped. Some plugins "
+                            "(e.g. with copy protection or a first-start/activation window) can't be hosted "
+                            f"directly — use the DAW route for them. Details: {self.log_path}")
                 reply = self._res.recv()
-            except (EOFError, OSError, BrokenPipeError) as e:
-                self._proc = None
+            except (EOFError, OSError, BrokenPipeError, AttributeError) as e:
+                self._kill()
                 self.crashes += 1
                 raise PluginHostCrashed(
                     "The plugin host stopped unexpectedly (the plugin crashed). irene-capture itself is fine; "
-                    "the plugin is loaded again with its default settings on the next action.") from e
+                    "the plugin is loaded again with its default settings on the next action. "
+                    f"Details: {self.log_path}") from e
         if not reply.get("ok"):
             raise PluginError(reply.get("error", "Unknown plugin error"))
         return reply
@@ -378,7 +528,7 @@ class PluginHostBackend(CaptureBackend):
 
     def load(self, path: str | Path, name: str | None = None) -> dict:
         msg = {"cmd": "load", "path": str(path), "name": name}
-        self.info = self._call(msg, timeout=120)["info"]
+        self.info = self._call(msg, timeout=LOAD_TIMEOUT_S)["info"]
         self._last_load = msg
         return self.info
 

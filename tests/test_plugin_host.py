@@ -90,3 +90,57 @@ def test_resolve_windows_bundle(tmp_path, monkeypatch):
     assert plugin_host.resolve_plugin_path(str(tmp_path / "X.vst3")) == str(b / "X.vst3")
     monkeypatch.setattr(sys, "platform", "darwin")
     assert plugin_host.resolve_plugin_path(str(tmp_path / "X.vst3")) == str(tmp_path / "X.vst3")
+
+
+def test_candidates_bundle_first(tmp_path, monkeypatch):
+    import sys
+
+    from irene_capture.backends import plugin_host
+
+    b = tmp_path / "Y.vst3" / "Contents" / "x86_64-win"
+    b.mkdir(parents=True)
+    (b / "Y.vst3").write_bytes(b"")
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert plugin_host.plugin_path_candidates(str(tmp_path / "Y.vst3")) == [str(tmp_path / "Y.vst3"), str(b / "Y.vst3")]
+    assert plugin_host._is_scan_failure(ImportError("Unable to scan plugin x: unsupported plugin format or scan failure."))
+
+
+def test_worker_exits_when_app_goes_away():
+    """If the app closes its end of the pipes (quit, crash), the worker must exit by itself,
+    without trying to report an error (that showed an 'unhandled exception' dialog on Windows)."""
+    import os
+    import time
+
+    h = PluginHostBackend()
+    h.load("builtin:Gain:gain_db=-6")
+    pid = h._worker_pid
+    assert pid and pid != os.getpid()
+    h._close_pipes()  # like the app disappearing
+    for _ in range(50):
+        if not h._proc.is_alive():
+            break
+        time.sleep(0.1)
+    assert not h._proc.is_alive()
+    assert "worker started" in h.log_path.read_text()
+
+
+def test_timeout_kills_worker(monkeypatch):
+    from irene_capture.backends import plugin_host
+
+    h = PluginHostBackend()
+    try:
+        h.load("builtin:Gain:gain_db=-6")
+        proc = h._proc
+        # a 'process' call on a huge signal with a tiny timeout
+        import numpy as np
+
+        with pytest.raises(PluginError, match="did not respond"):
+            h._call({"cmd": "process", "audio": np.zeros((48000 * 120, 2), np.float32), "sr": 48000.0,
+                     "warmup": 0}, timeout=0.01)
+        proc.join(5)
+        assert not proc.is_alive() and h._proc is None
+        # next call starts a new worker and reloads the plugin
+        assert h.parameters() is not None and h.info["name"] == "Gain"
+    finally:
+        h.stop()
+    assert plugin_host.LOAD_TIMEOUT_S >= 60

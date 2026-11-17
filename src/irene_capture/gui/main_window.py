@@ -89,10 +89,18 @@ class MainWindow(QMainWindow):
         guide = QAction("User guide (online)", self)
         guide.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(REPO + "#readme")))
         h.addAction(guide)
+        logs = QAction("Open log folder", self)
+        logs.triggered.connect(self._open_logs)
+        h.addAction(logs)
         about = QAction("About irene-capture", self)
         about.setMenuRole(QAction.MenuRole.AboutRole)
         about.triggered.connect(self.about)
         h.addAction(about)
+
+    def _open_logs(self) -> None:
+        from ..paths import config_dir
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
 
     def go(self, step: int) -> None:
         self.steps.setCurrentRow(step)

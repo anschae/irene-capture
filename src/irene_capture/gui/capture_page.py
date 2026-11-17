@@ -279,6 +279,7 @@ class PluginTab(QWidget):
         self.host = None
         self.editor_open = False
         self.pending_capture = False
+        self.loading = False
 
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter plugins…")
@@ -407,8 +408,15 @@ class PluginTab(QWidget):
         return self.host
 
     def load(self, path: str) -> None:
+        if self.loading:
+            self.status.emit("Still loading the previous plugin — please wait.")
+            return
+        if self.editor_open:
+            self.status.emit("Close the plugin editor before loading another plugin.")
+            return
         host = self.ensure_host()
-        self.loaded.setText(f"Loading {Path(path).name}…")
+        self.loading = True
+        self.loaded.setText(f"Loading {Path(path).name}… (some plugins take a while; the limit is 2 minutes)")
         self._busy(True)
 
         def work():
@@ -425,6 +433,7 @@ class PluginTab(QWidget):
                 name, ok = QInputDialog.getItem(self, "Choose a plugin", f"{Path(path).name} contains several "
                                                 "plugins:", names, 0, False)
                 if not ok:
+                    self.loading = False
                     self._busy(False)
                     self.loaded.setText("No plugin loaded.")
                     return
@@ -433,6 +442,7 @@ class PluginTab(QWidget):
         run_in_background(work, on_done=got_names, on_error=self._failed)
 
     def _loaded(self, info: dict) -> None:
+        self.loading = False
         self._busy(False)
         lat = f", latency {info['latency']} samples" if info.get("latency") else ""
         self.loaded.setText(f"<b>{info['name']}</b> — {info.get('manufacturer') or info['format']}{lat}<br>"
@@ -444,6 +454,7 @@ class PluginTab(QWidget):
             self.name.setText(self.page.setup.capture_type().value)
 
     def _failed(self, exc, tb) -> None:
+        self.loading = False
         self._busy(False)
         self.editor_open = False
         self.editor_btn.setText("Open editor")
