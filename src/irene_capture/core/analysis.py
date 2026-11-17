@@ -304,7 +304,9 @@ def analyze(session: Session, rendered: RenderedAudio, options: AnalysisOptions 
     noise_rel = 20 * np.log10(4 * np.sqrt(noise_power) / peak) if noise_power > 0 and peak > 0 else -300.0
     early = find_early_onset(raw.data, onset + raw.zero, max(NEGATIVE_CONTENT_DB, noise_rel),
                              int(NEGATIVE_CONTENT_GAP_S * sr)) - raw.zero
-    negative_content = early < -NEGATIVE_CONTENT_GUARD
+    # With strong distortion the "content" before zero is distortion products, not pre-ringing.
+    strongly_nonlinear = distortion is not None and distortion.thd_percent > THD_WARNING_PERCENT
+    negative_content = early < -NEGATIVE_CONTENT_GUARD and not strongly_nonlinear
     if negative_content:
         start = early - margin
     elif result.trim_latency:
@@ -317,7 +319,8 @@ def analyze(session: Session, rendered: RenderedAudio, options: AnalysisOptions 
             "latency", Severity.INFO,
             f"The output starts {_ms(onset, sr)} after the input: plugin latency or pre-delay.",
             "Trim latency removes it." if not result.trim_latency else ""))
-    max_len = min(int(round(s.ir_length_s * sr)), raw.pos - start)
+    # the IR covers at least [start, IR length): content before zero makes it longer, not shifted
+    max_len = min(int(round(s.ir_length_s * sr)) - min(start, 0), raw.pos - start)
     h = raw.window(start, max_len)
     result.ir_start = start
     if result.trim_latency and start > 0:
@@ -343,7 +346,6 @@ def analyze(session: Session, rendered: RenderedAudio, options: AnalysisOptions 
             out.append(CheckResult("tail_trim", Severity.INFO,
                                    f"Full length kept ({tail.length / sr:.3f} s) with a {_ms(tail.fade_len, sr)} "
                                    "fade-out.", conversion=True))
-    strongly_nonlinear = distortion is not None and distortion.thd_percent > THD_WARNING_PERCENT
     if tail.truncated and strongly_nonlinear:
         out.append(CheckResult("truncated", Severity.INFO,
                                "Can't tell whether the IR decayed: the distortion products cover the tail."))

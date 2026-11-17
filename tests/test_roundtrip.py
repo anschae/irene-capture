@@ -171,3 +171,17 @@ def test_normalization_and_null_gain_undone():
                    options=AnalysisOptions(normalization=Normalization.PEAK, peak_target_dbfs=-3))
     assert 20 * np.log10(np.max(np.abs(p.ir))) == pytest.approx(-3, abs=1e-6)
     assert p.normalization_gain_db != 0
+
+
+def test_ir_window_extends_for_pre_ringing():
+    h = T.linear_phase_ir()
+    _, res = capture("eq", T.LTIPlugin(h, advance=h.size // 2), options=raw_options())
+    # the window grows by the pre-ringing instead of shifting: the full IR length after zero stays
+    assert res.length_samples >= int(0.25 * SR) - res.ir_start - 1
+
+
+def test_nonlinear_ir_starts_at_zero():
+    _, res = capture("cabinet", T.tanh_plugin())
+    assert res.ir_start >= 0
+    peak = np.argmax(np.max(np.abs(res.ir[0]), axis=0))
+    assert peak < int(0.002 * SR)  # the main (linear) part is in the IR

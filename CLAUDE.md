@@ -66,7 +66,9 @@ docs/DSP.md (signal design and maths, written for the owner). In one line each:
 * **Onset** = first sample above −40 dB re peak on a Gaussian-smoothed (σ 1.5 samples) copy.
   Trim latency keeps 0.5 ms before the onset. Without trim the IR starts at zero delay,
   except when there's content before it connected to the onset (down to −80 dB / noise,
-  gaps ≤ 2 ms): then it is kept (linear-phase pre-ringing).
+  gaps ≤ 2 ms): then it is kept (linear-phase pre-ringing) and the IR gets longer by that
+  amount (the window is [start, IR length), not shifted). Skipped for strongly non-linear
+  plugins, whose "content before zero" is distortion products.
 * **Alignment:** lag > pre-roll → realign (drop samples); lag < −1 ms (file starts late) →
   realign (pad); lag < −pre-roll → error. Latency/pre-delay is reported from the IR onset,
   not from the cross-correlation peak (which for reverbs lands somewhere in the tail).
