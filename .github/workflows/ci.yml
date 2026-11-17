@@ -160,12 +160,22 @@ jobs:
             else perl -e 'alarm shift; exec @ARGV' 240 "$APP" "$@"; fi
           }
           RESULTS=""
-          for NAME in DragonflyRoomReverb DragonflyEarlyReflections "Surge XT Effects"; do
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            AU=/System/Library/Components/CoreAudio.component
+            echo "::group::Apple AULowpass (AU) — plain Python first"
+            perl -e 'alarm shift; exec @ARGV' 90 python tools/vst3_probe.py $AU "Apple: AULowpass"
+            app spike-editor --plugin $AU --plugin-name "Apple: AULowpass" --seconds 3; E=$?
+            app plugin-capture --plugin $AU --plugin-name "Apple: AULowpass" --type eq --out-dir spike-out; C=$?
+            echo "::endgroup::"
+            RESULTS="$RESULTS\nApple AULowpass: editor exit=$E, capture exit=$C"
+          fi
+          for NAME in DragonflyEarlyReflections DragonflyRoomReverb "Surge XT Effects"; do
             P=$(find "$PWD/spike" -maxdepth 10 -name "$NAME.vst3" -prune | head -1)
             [ -z "$P" ] && continue
             P=$(winpath "$P")
             echo "::group::$NAME (plain Python, for comparison)"
-            python -c "import pedalboard,sys; p=pedalboard.load_plugin(sys.argv[1]); print('plain python OK:', p.name)" "$P" 2>&1 | tail -5
+            python tools/vst3_probe.py "$P" 2>&1 | tail -15
+            ps aux 2>/dev/null | grep -i "irene-capture" | grep -v grep | head -5
             echo "::endgroup::"
             echo "::group::$NAME: editor"
             app spike-editor --plugin "$P" --seconds 4; E=$?
@@ -175,14 +185,6 @@ jobs:
             echo "::endgroup::"
             RESULTS="$RESULTS\n$NAME: editor exit=$E, capture exit=$C"
           done
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            AU=/System/Library/Components/CoreAudio.component
-            echo "::group::Apple AULowpass (AU)"
-            app spike-editor --plugin $AU --plugin-name "Apple: AULowpass" --seconds 3; E=$?
-            app plugin-capture --plugin $AU --plugin-name "Apple: AULowpass" --type eq --out-dir spike-out; C=$?
-            echo "::endgroup::"
-            RESULTS="$RESULTS\nApple AULowpass: editor exit=$E, capture exit=$C"
-          fi
           ls -la spike-out
           echo -e "SPIKE RESULTS ($RUNNER_OS):$RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
 
