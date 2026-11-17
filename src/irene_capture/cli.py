@@ -164,8 +164,9 @@ def cmd_plugin_capture(a: argparse.Namespace) -> int:
     with PluginHostBackend() as host:
         info = host.load(a.plugin, a.plugin_name)
         print(f"Loaded {info['name']} (latency {info.get('latency', 0)} samples)")
-        if a.editor:
-            host.show_editor()
+        if a.editor or a.editor_seconds:
+            res = host.show_editor(auto_close_s=a.editor_seconds)
+            print(f"Editor closed ({'ok' if res.get('ok') else res})")
         result = host.capture_and_analyze(session)
         print_checks(result)
         if not result.ok:
@@ -223,7 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_settings_args(pc)
     pc.add_argument("--plugin", required=True, help="path to .vst3/.component, or builtin:Name[:param=value,...]")
     pc.add_argument("--plugin-name", help="for files that contain several plugins")
-    pc.add_argument("--editor", action="store_true", help="open the plugin editor first")
+    pc.add_argument("--editor", action="store_true", help="open the plugin editor first (close it to capture)")
+    pc.add_argument("--editor-seconds", type=float, help="open the editor and close it after N seconds")
     pc.add_argument("--out-dir")
     pc.set_defaults(func=cmd_plugin_capture)
 
