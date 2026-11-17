@@ -18,8 +18,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install ruff
@@ -35,8 +35,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -62,8 +62,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -87,9 +87,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist\irene-capture.exe -ArgumentList '--selftest','--log','selftest.log' -Wait -PassThru
+          # A windowed .exe has no console: wait for it explicitly and read its log file.
+          $p = Start-Process -FilePath dist\irene-capture.exe -ArgumentList '--selftest','--log','selftest.log' -PassThru
+          $null = $p.Handle  # needed so that ExitCode is available after WaitForExit
+          $p.WaitForExit()
           Get-Content selftest.log
-          if ($p.ExitCode -ne 0) { exit 1 }
+          Write-Host "exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0 -or -not (Select-String -Path selftest.log -Pattern 'Self-test passed' -Quiet)) { exit 1 }
           Compress-Archive -Path dist\irene-capture.exe -DestinationPath "irene-capture-${{ steps.version.outputs.version }}-${{ matrix.platform }}.zip"
       - name: Package and self-test (macOS)
         if: runner.os == 'macOS'
@@ -173,8 +177,8 @@ jobs:
           echo "Plugin: $VST3"
           set +e
           if [ "$RUNNER_OS" = "Windows" ]; then
-            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','spike.txt','spike-editor','--plugin','$VST3','--seconds','4') -Wait -PassThru; Get-Content spike.txt; exit \$p.ExitCode"; E=$?
-            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','cap.txt','plugin-capture','--plugin','$VST3','--type','reverb','--ir-length','2','--editor-seconds','3','--out-dir','out') -Wait -PassThru; Get-Content cap.txt; exit \$p.ExitCode"; C=$?
+            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','spike.txt','spike-editor','--plugin','\"$VST3\"','--seconds','4') -PassThru; \$null = \$p.Handle; \$p.WaitForExit(); Get-Content spike.txt; exit \$p.ExitCode"; E=$?
+            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','cap.txt','plugin-capture','--plugin','\"$VST3\"','--type','reverb','--ir-length','2','--editor-seconds','3','--out-dir','out') -PassThru; \$null = \$p.Handle; \$p.WaitForExit(); Get-Content cap.txt; exit \$p.ExitCode"; C=$?
           else
             "$APP" spike-editor --plugin "$VST3" --seconds 4; E=$?
             "$APP" plugin-capture --plugin "$VST3" --type reverb --ir-length 2 --editor-seconds 3 --out-dir out; C=$?
