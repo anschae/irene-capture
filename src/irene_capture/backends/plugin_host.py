@@ -258,6 +258,8 @@ class PluginHostBackend(CaptureBackend):
         self.info: dict = {}
         self.last_determinism: CheckResult | None = None
         self.last_rendered: RenderedAudio | None = None
+        self._last_load: dict | None = None
+        self.crashes = 0
 
     # lifecycle
     def start(self) -> None:
@@ -297,7 +299,11 @@ class PluginHostBackend(CaptureBackend):
         return self._proc is not None and self._proc.is_alive()
 
     def _call(self, msg: dict, timeout: float | None = 600.0) -> dict:
+        restarted = not self.alive
         self.start()
+        if restarted and self._last_load and msg.get("cmd") not in ("load", "names", "quit"):
+            # The worker died earlier (crashing plugin): load the plugin again transparently.
+            self._call(dict(self._last_load), timeout=120)
         with self._call_lock:
             try:
                 with self._send_lock:
@@ -306,6 +312,8 @@ class PluginHostBackend(CaptureBackend):
                 while not self._res.poll(0.25):
                     waited += 0.25
                     if not self._proc.is_alive():
+                        self._proc = None
+                        self.crashes += 1
                         raise PluginHostCrashed(
                             "The plugin crashed the plugin host. irene-capture itself is fine; load the plugin "
                             "again (or try the DAW route if it keeps crashing).")
@@ -314,7 +322,10 @@ class PluginHostBackend(CaptureBackend):
                 reply = self._res.recv()
             except (EOFError, OSError, BrokenPipeError) as e:
                 self._proc = None
-                raise PluginHostCrashed("The plugin host stopped unexpectedly. Load the plugin again.") from e
+                self.crashes += 1
+                raise PluginHostCrashed(
+                    "The plugin host stopped unexpectedly (the plugin crashed). irene-capture itself is fine; "
+                    "the plugin is loaded again with its default settings on the next action.") from e
         if not reply.get("ok"):
             raise PluginError(reply.get("error", "Unknown plugin error"))
         return reply
@@ -326,7 +337,9 @@ class PluginHostBackend(CaptureBackend):
         return self._call({"cmd": "names", "path": str(path)})["names"]
 
     def load(self, path: str | Path, name: str | None = None) -> dict:
-        self.info = self._call({"cmd": "load", "path": str(path), "name": name}, timeout=120)["info"]
+        msg = {"cmd": "load", "path": str(path), "name": name}
+        self.info = self._call(msg, timeout=120)["info"]
+        self._last_load = msg
         return self.info
 
     def show_editor(self, auto_close_s: float | None = None) -> dict:

@@ -142,6 +142,7 @@ jobs:
           - { os: macos-latest, platform: macos-arm64, pattern: "*[Mm]ac*" }
           - { os: ubuntu-22.04, platform: linux, pattern: "*[Ll]inux*x86*64*" }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
@@ -158,20 +159,30 @@ jobs:
           cd artifact
           find . -maxdepth 3 | head -20
           Z=$(find . -type f -name "*.zip" | head -1)
-          if [ -n "$Z" ]; then unzip -q -o "$Z"; fi
+          if [ -n "$Z" ]; then
+            # macOS: extract like Finder does (ditto keeps permissions and signatures)
+            if [ "$RUNNER_OS" = "macOS" ]; then ditto -x -k "$Z" .; else unzip -q -o "$Z"; fi
+          fi
           find . -maxdepth 4 \( -name "irene-capture.exe" -o -name "irene-capture" \) | head
       - name: Linux display
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install -y xvfb libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libfreetype6 libasound2
-          Xvfb :99 -screen 0 1280x1024x24 & echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          sudo apt-get update && sudo apt-get install -y xvfb openbox libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libfreetype6 libasound2
+          Xvfb :99 -screen 0 1280x1024x24 & sleep 2
+          DISPLAY=:99 openbox & sleep 1
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
       - name: Download Dragonfly Reverb
         run: |
           mkdir plugins && cd plugins
           gh release download --repo michaelwillis/dragonfly-reverb --pattern "${{ matrix.pattern }}" || gh release view --repo michaelwillis/dragonfly-reverb
-          for f in *; do case "$f" in *.zip) unzip -q "$f";; *.tar.*|*.tgz) tar xf "$f";; *.dmg) hdiutil attach -nobrowse -mountpoint /tmp/df "$f" && cp -R /tmp/df/* . ;; esac; done
-          find . -maxdepth 6 -name "*.vst3" | head -20
-          P=$(find "$PWD" -maxdepth 6 -name 'DragonflyRoomReverb.vst3' | head -1)
+          for f in *; do case "$f" in
+            *.zip) unzip -q "$f";;
+            *.tar.*|*.tgz) tar xf "$f";;
+            *.dmg) hdiutil attach -nobrowse -mountpoint /tmp/df "$f" && cp -R /tmp/df/ "dmg_${f%.dmg}" ; hdiutil detach /tmp/df;;
+          esac; done
+          for p in $(find . -name "*.pkg" -maxdepth 4); do pkgutil --expand-full "$p" "${p%.pkg}_expanded" || true; done
+          find . -maxdepth 10 | grep -iE "vst3$|\.pkg$|\.component$" | head -30
+          P=$(find "$PWD" -maxdepth 10 -name 'DragonflyRoomReverb.vst3' | head -1)
           if [ "$RUNNER_OS" = "Windows" ]; then P=$(cygpath -w "$P"); fi
           echo "VST3=$P" >> "$GITHUB_ENV"
       - name: Spike (frozen app)
@@ -180,16 +191,17 @@ jobs:
           elif [ "$RUNNER_OS" = "macOS" ]; then APP=$(find artifact -path "*irene-capture.app/Contents/MacOS/irene-capture" | head -1)
           else APP=$(find artifact -type f -name irene-capture | head -1); chmod +x "$APP"; fi
           echo "App: $APP"
+          to() { if command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi; }
           echo "APP=$APP" >> "$GITHUB_ENV"
           echo "::group::list"; "$APP" --log l.txt list-plugins plugins || true; sleep 2; cat l.txt || true; echo "::endgroup::"
           echo "Plugin: $VST3"
           set +e
           if [ "$RUNNER_OS" = "Windows" ]; then
-            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','spike.txt','spike-editor','--plugin','\"$VST3\"','--seconds','4') -PassThru; \$null = \$p.Handle; \$p.WaitForExit(); Get-Content spike.txt; exit \$p.ExitCode"; E=$?
-            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','cap.txt','plugin-capture','--plugin','\"$VST3\"','--type','reverb','--ir-length','2','--editor-seconds','3','--out-dir','out') -PassThru; \$null = \$p.Handle; \$p.WaitForExit(); Get-Content cap.txt; exit \$p.ExitCode"; C=$?
+            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','spike.txt','spike-editor','--plugin','\"$VST3\"','--seconds','4') -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(180000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content spike.txt; exit \$p.ExitCode"; E=$?
+            pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','cap.txt','plugin-capture','--plugin','\"$VST3\"','--type','reverb','--ir-length','2','--editor-seconds','3','--out-dir','out') -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(240000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content cap.txt; exit \$p.ExitCode"; C=$?
           else
-            "$APP" spike-editor --plugin "$VST3" --seconds 4; E=$?
-            "$APP" plugin-capture --plugin "$VST3" --type reverb --ir-length 2 --editor-seconds 3 --out-dir out; C=$?
+            to 180 "$APP" spike-editor --plugin "$VST3" --seconds 4; E=$?
+            to 240 "$APP" plugin-capture --plugin "$VST3" --type reverb --ir-length 2 --editor-seconds 3 --out-dir out; C=$?
           fi
           ls -la out || true
           echo "editor exit=$E capture exit=$C"
@@ -197,6 +209,8 @@ jobs:
       - name: Apple AU (macOS)
         if: runner.os == 'macOS'
         run: |
-          "$APP" spike-editor --plugin /System/Library/Components/CoreAudio.component --plugin-name "Apple: AULowpass" --seconds 3
-          "$APP" plugin-capture --plugin /System/Library/Components/CoreAudio.component --plugin-name "Apple: AULowpass" --type eq --out-dir out-au
+          to() { if command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi; }
+          "$APP" list-plugins /System/Library/Components | head -5 || true
+          to 180 "$APP" spike-editor --plugin /System/Library/Components/CoreAudio.component --plugin-name "Apple: AULowpass" --seconds 3
+          to 240 "$APP" plugin-capture --plugin /System/Library/Components/CoreAudio.component --plugin-name "Apple: AULowpass" --type eq --out-dir out-au
           ls -la out-au

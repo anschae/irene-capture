@@ -62,3 +62,16 @@ def test_scan_finds_bundles(tmp_path):
     (tmp_path / "B.vst3").write_bytes(b"")
     found = [p.name for p in scan_plugins([tmp_path])]
     assert "A.vst3" in found and "B.vst3" in found
+
+
+def test_recovers_after_worker_crash():
+    h = PluginHostBackend()
+    try:
+        h.load("builtin:Gain:gain_db=-6")
+        h._proc.kill()  # simulate a crashing plugin
+        h._proc.join(5)
+        # next call restarts the worker and reloads the plugin transparently
+        res = h.capture_and_analyze(session("eq"))
+        assert res.ok and res.rating == "excellent"
+    finally:
+        h.stop()

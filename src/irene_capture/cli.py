@@ -157,17 +157,28 @@ def cmd_analyze(a: argparse.Namespace) -> int:
 
 
 def cmd_plugin_capture(a: argparse.Namespace) -> int:
-    from .backends.plugin_host import PluginHostBackend
+    from .backends.plugin_host import PluginError, PluginHostBackend
 
     settings = settings_from_args(a)
     session = create_session(settings, source="plugin")
     with PluginHostBackend() as host:
-        info = host.load(a.plugin, a.plugin_name)
+        try:
+            info = host.load(a.plugin, a.plugin_name)
+        except PluginError as e:
+            print(f"✗ {e}", file=sys.stderr)
+            return 1
         print(f"Loaded {info['name']} (latency {info.get('latency', 0)} samples)")
         if a.editor or a.editor_seconds:
-            res = host.show_editor(auto_close_s=a.editor_seconds)
-            print(f"Editor closed ({'ok' if res.get('ok') else res})")
-        result = host.capture_and_analyze(session)
+            try:
+                host.show_editor(auto_close_s=a.editor_seconds)
+                print("Editor closed.")
+            except PluginError as e:
+                print(f"! Editor failed: {e} Capturing with the default settings.", file=sys.stderr)
+        try:
+            result = host.capture_and_analyze(session)
+        except PluginError as e:
+            print(f"✗ {e}", file=sys.stderr)
+            return 1
         print_checks(result)
         if not result.ok:
             return 1
@@ -188,14 +199,21 @@ def cmd_list_plugins(a: argparse.Namespace) -> int:
 
 def cmd_spike_editor(a: argparse.Namespace) -> int:
     """Open a plugin editor in the worker and close it after a few seconds (CI spike)."""
-    from .backends.plugin_host import PluginHostBackend
+    from .backends.plugin_host import PluginError, PluginHostBackend
 
     with PluginHostBackend() as host:
-        info = host.load(a.plugin, a.plugin_name)
-        print(f"Loaded {info['name']}; editor: {info.get('has_editor')}")
-        res = host.show_editor(auto_close_s=a.seconds)
-        print(f"Editor result: {res}")
-        return 0 if res.get("ok") else 1
+        try:
+            info = host.load(a.plugin, a.plugin_name)
+            print(f"Loaded {info['name']}; editor: {info.get('has_editor')}")
+            res = host.show_editor(auto_close_s=a.seconds)
+            print(f"Editor opened and closed: {res.get('ok')}")
+            # the host must still work after the editor
+            params = host.parameters()
+            print(f"{len(params)} parameters readable after the editor closed")
+            return 0 if res.get("ok") else 1
+        except PluginError as e:
+            print(f"✗ {e}", file=sys.stderr)
+            return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
