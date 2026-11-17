@@ -80,6 +80,28 @@ def scan_plugins(extra_folders: list[Path] | None = None, max_depth: int = 4) ->
     return found
 
 
+def resolve_plugin_path(path: str) -> str:
+    """The path to give to pedalboard.
+
+    On Windows, pedalboard (0.9.x) can't scan VST3 *bundle folders* ("unsupported plugin format
+    or scan failure"), but it loads the module inside the bundle
+    (``X.vst3/Contents/x86_64-win/X.vst3``). Found in the CI plugin spike with Dragonfly Reverb
+    and Surge XT.
+    """
+    p = Path(path)
+    if sys.platform != "win32" or not p.is_dir() or p.suffix.lower() != ".vst3":
+        return path
+    import platform
+
+    arch = {"amd64": "x86_64-win", "x86_64": "x86_64-win", "arm64": "arm64x-win"}.get(platform.machine().lower(),
+                                                                                       "x86_64-win")
+    candidates = [p / "Contents" / arch / p.name, *sorted((p / "Contents").glob("*-win/*.vst3"))]
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return path
+
+
 # --- worker side ---------------------------------------------------------------------------
 
 
@@ -98,6 +120,12 @@ def _make_builtin(spec: str):
     return cls(**kwargs)
 
 
+def _is_external(plugin) -> bool:
+    # Don't use hasattr(plugin, "raw_state"): that evaluates the property and asks the plugin
+    # for its whole state, which some plugins are slow (or hang) with.
+    return hasattr(type(plugin), "raw_state")
+
+
 def _plugin_info(plugin, path: str) -> dict:
     name = getattr(plugin, "name", None) or type(plugin).__name__
     return {
@@ -106,8 +134,8 @@ def _plugin_info(plugin, path: str) -> dict:
         "manufacturer": str(getattr(plugin, "manufacturer_name", "") or ""),
         "version": str(getattr(plugin, "version", "") or ""),
         "latency": int(getattr(plugin, "reported_latency_samples", 0) or 0),
-        "has_editor": hasattr(plugin, "show_editor"),
-        "is_external": hasattr(plugin, "raw_state"),
+        "has_editor": hasattr(type(plugin), "show_editor"),
+        "is_external": _is_external(plugin),
         "format": "VST3" if path.lower().endswith(".vst3") else "AU" if path.lower().endswith(".component")
         else "built-in",
     }
@@ -186,14 +214,14 @@ def worker_main(cmd_conn, res_conn) -> None:  # pragma: no cover - runs in the c
                     plugin = _make_builtin(path)
                 else:
                     kwargs = {"plugin_name": msg["name"]} if msg.get("name") else {}
-                    plugin = pedalboard.load_plugin(path, **kwargs)
+                    plugin = pedalboard.load_plugin(resolve_plugin_path(path), **kwargs)
                     if getattr(plugin, "is_instrument", False) and not getattr(plugin, "is_effect", True):
                         raise PluginError("This is an instrument, not an effect.")
                 res_conn.send({"ok": True, "info": _plugin_info(plugin, path)})
             elif plugin is None:
                 res_conn.send({"ok": False, "error": "No plugin loaded."})
             elif cmd == "show_editor":
-                if not hasattr(plugin, "show_editor"):
+                if not hasattr(type(plugin), "show_editor"):
                     res_conn.send({"ok": False, "error": "This plugin has no editor."})
                     continue
                 ev = threading.Event()
@@ -318,7 +346,14 @@ class PluginHostBackend(CaptureBackend):
                             "The plugin crashed the plugin host. irene-capture itself is fine; load the plugin "
                             "again (or try the DAW route if it keeps crashing).")
                     if timeout is not None and waited > timeout:
-                        raise PluginError("The plugin did not respond in time.")
+                        # stop the stuck worker, so it doesn't keep a CPU core busy; the next
+                        # action starts a new one (and reloads the plugin)
+                        self._proc.kill()
+                        self._proc.join(2)
+                        self._proc = None
+                        raise PluginError(
+                            f"The plugin did not respond within {timeout:.0f} s and was stopped. Try again, or "
+                            "use the DAW route for this plugin.")
                 reply = self._res.recv()
             except (EOFError, OSError, BrokenPipeError) as e:
                 self._proc = None
@@ -360,7 +395,7 @@ class PluginHostBackend(CaptureBackend):
         return self._call({"cmd": "set_param", "key": key, "raw_value": raw_value})["text"]
 
     def state(self) -> dict:
-        return self._call({"cmd": "state"})
+        return self._call({"cmd": "state"}, timeout=60)
 
     def process(self, audio: np.ndarray, sample_rate: int, warmup_s: float = WARMUP_S) -> np.ndarray:
         reply = self._call({"cmd": "process", "audio": audio.astype(np.float32), "sr": float(sample_rate),

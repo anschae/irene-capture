@@ -155,17 +155,19 @@ jobs:
           app() {
             if [ "$RUNNER_OS" = "Windows" ]; then
               ARGS=""; for a in "$@"; do ARGS="$ARGS,'\"$a\"'"; done
-              pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','run.txt'$ARGS) -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(240000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content run.txt; exit \$p.ExitCode"
-            elif command -v timeout > /dev/null; then timeout 240 "$APP" "$@"
-            else perl -e 'alarm shift; exec @ARGV' 240 "$APP" "$@"; fi
+              pwsh -Command "\$p = Start-Process -FilePath '$APP' -ArgumentList @('--log','run.txt'$ARGS) -PassThru; \$null = \$p.Handle; if (-not \$p.WaitForExit(150000)) { \$p.Kill(); Write-Host 'TIMEOUT' }; Get-Content run.txt; exit \$p.ExitCode"
+            elif command -v timeout > /dev/null; then timeout 150 "$APP" "$@"
+            else perl -e 'alarm shift; exec @ARGV' 150 "$APP" "$@"; fi
           }
           RESULTS=""
           if [ "$RUNNER_OS" = "macOS" ]; then
             AU=/System/Library/Components/CoreAudio.component
             echo "::group::Apple AULowpass (AU) — plain Python first"
-            perl -e 'alarm shift; exec @ARGV' 90 python tools/vst3_probe.py $AU "Apple: AULowpass"
-            app spike-editor --plugin $AU --plugin-name "Apple: AULowpass" --seconds 3; E=$?
-            app plugin-capture --plugin $AU --plugin-name "Apple: AULowpass" --type eq --out-dir spike-out; C=$?
+            perl -e 'alarm shift; exec @ARGV' 60 python tools/vst3_probe.py $AU "Apple: AULowpass"
+            if [ $? -eq 0 ]; then
+              app spike-editor --plugin $AU --plugin-name "Apple: AULowpass" --seconds 3; E=$?
+              app plugin-capture --plugin $AU --plugin-name "Apple: AULowpass" --type eq --out-dir spike-out; C=$?
+            else E="skipped (plain pedalboard hangs too)"; C=$E; fi
             echo "::endgroup::"
             RESULTS="$RESULTS\nApple AULowpass: editor exit=$E, capture exit=$C"
           fi
@@ -175,7 +177,7 @@ jobs:
             P=$(winpath "$P")
             echo "::group::$NAME (plain Python, for comparison)"
             python tools/vst3_probe.py "$P" 2>&1 | tail -15
-            ps aux 2>/dev/null | grep -i "irene-capture" | grep -v grep | head -5
+            pkill -f "irene-capture.*multiprocessing" 2>/dev/null || true
             echo "::endgroup::"
             echo "::group::$NAME: editor"
             app spike-editor --plugin "$P" --seconds 4; E=$?

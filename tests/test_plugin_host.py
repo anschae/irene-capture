@@ -76,3 +76,17 @@ def test_recovers_after_worker_crash():
         assert res.plugin_info["name"] == "Gain" and h.crashes == 0
     finally:
         h.stop()
+
+
+def test_resolve_windows_bundle(tmp_path, monkeypatch):
+    import sys
+
+    from irene_capture.backends import plugin_host
+
+    b = tmp_path / "X.vst3" / "Contents" / "x86_64-win"
+    b.mkdir(parents=True)
+    (b / "X.vst3").write_bytes(b"")
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert plugin_host.resolve_plugin_path(str(tmp_path / "X.vst3")) == str(b / "X.vst3")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert plugin_host.resolve_plugin_path(str(tmp_path / "X.vst3")) == str(tmp_path / "X.vst3")
