@@ -259,6 +259,7 @@ class _Tee:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     log = open(args.log, "w", encoding="utf-8") if args.log else None  # noqa: SIM115
+    old_out, old_err = sys.stdout, sys.stderr
     if log:
         sys.stdout = _Tee(sys.stdout, log)
         sys.stderr = _Tee(sys.stderr, log)
@@ -273,4 +274,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if log:
             sys.stdout.flush()
+            # restore first: a stream left pointing at a closed file makes Python exit with 120
+            sys.stdout, sys.stderr = old_out, old_err
             log.close()

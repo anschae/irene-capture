@@ -78,3 +78,28 @@ def test_daw_route(app, tmp_path):
             app.processEvents()
             w.grab().save(f"{out}/results_plot{i}.png")
     w.close()
+
+
+def test_plugin_route(app, tmp_path):
+    from irene_capture.gui.main_window import MainWindow
+
+    qs = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    w = MainWindow(qs)
+    w.show()
+    w.setup.out_dir.setText(str(tmp_path))
+    w.setup.type.setCurrentIndex(w.setup.type.findData("eq"))
+    w.setup.sweep_len.setValue(2.0)
+    tab = w.capture.plugin
+    tab.load("builtin:Gain:gain_db=-6")
+    wait_for(app, lambda: tab.capture_btn.isEnabled())
+    assert "Gain" in tab.loaded.text()
+    tab.name.setText("minus six")
+    tab.save_rendered.setChecked(True)
+    tab.capture()
+    wait_for(app, lambda: w.results.results)
+    res = w.results.results[0]
+    assert res.rating == "excellent" and res.plugin_info["name"] == "Gain"
+    w.results.create_files()
+    names = sorted(p.name for p in res.written)
+    assert "Gain_minus_six_ir.wav" in names and "Gain_minus_six_ir_rendered.wav" in names
+    w.close()

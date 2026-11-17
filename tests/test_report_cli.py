@@ -136,3 +136,12 @@ def test_cli_selftest_parts():
     from irene_capture.selftest import daw_route
 
     assert "null test" in daw_route()
+
+
+def test_cli_log_file_restores_streams(tmp_path):
+    import sys
+
+    before = sys.stdout
+    assert cli(["--log", str(tmp_path / "log.txt"), "list-plugins", str(tmp_path)]) == 0
+    assert sys.stdout is before
+    assert (tmp_path / "log.txt").exists()
