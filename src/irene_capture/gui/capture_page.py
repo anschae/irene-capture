@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QUrl, Signal
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -456,9 +456,30 @@ class PluginTab(QWidget):
         if not self.editor_open:
             self.editor_btn.setEnabled(not on and bool(self.host and self.host.info.get("has_editor")))
 
+    def request_editor_close(self) -> None:
+        self.host.close_editor()
+        QTimer.singleShot(6000, self._check_editor_closed)
+
+    def _check_editor_closed(self) -> None:
+        if not self.editor_open:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Plugin window")
+        box.setText("The plugin's window doesn't close by itself.")
+        box.setInformativeText("Close it with its own close button. If you can't see a window, stop the plugin: it is "
+                               "loaded again with its default settings (your changes in the editor are lost).")
+        wait = box.addButton("Wait", QMessageBox.ButtonRole.RejectRole)
+        stop = box.addButton("Stop the plugin", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(wait)
+        box.exec()
+        if box.clickedButton() is stop and self.editor_open:
+            self.pending_capture = False
+            self.host.kill_worker()
+
     def toggle_editor(self) -> None:
         if self.editor_open:
-            self.host.close_editor()
+            self.request_editor_close()
             return
         self.editor_open = True
         self.editor_btn.setText("Close editor")
@@ -473,8 +494,13 @@ class PluginTab(QWidget):
                 self.capture()
 
         def failed(exc, tb):
+            from ..backends.plugin_host import PluginHostCrashed
+
             self.editor_open = False
             self.editor_btn.setText("Open editor")
+            if isinstance(exc, PluginHostCrashed):
+                self.status.emit("The plugin was stopped; it is loaded again with default settings on the next action.")
+                return
             QMessageBox.warning(self, "Plugin editor",
                                 f"The plugin editor could not be shown:\n{exc}\n\nUse Generic controls… instead.")
 
@@ -500,7 +526,7 @@ class PluginTab(QWidget):
             # Close the editor first; the capture starts when it is closed. Some plugins ignore the
             # request to close (seen on macOS), then the user closes the window.
             self.pending_capture = True
-            self.host.close_editor()
+            self.request_editor_close()
             self.status.emit("Closing the plugin editor… If its window stays open, close it to start the capture.")
             return
         settings = setup.settings()

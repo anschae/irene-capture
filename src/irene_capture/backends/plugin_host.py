@@ -315,6 +315,11 @@ class PluginHostBackend(CaptureBackend):
             self._proc.join(2)
         self._proc = None
 
+    def kill_worker(self) -> None:
+        """Stop a stuck worker immediately (a running call then raises PluginHostCrashed)."""
+        if self._proc is not None and self._proc.is_alive():
+            self._proc.kill()
+
     def __enter__(self):
         self.start()
         return self

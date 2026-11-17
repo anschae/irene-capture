@@ -112,7 +112,9 @@ otherwise the most recent session is used (you're told), otherwise you're asked 
 3. Name the capture and press **Capture** (an open editor is closed first).
 4. Change the sound and capture again as often as you like — no reloading needed.
 
-The plugin runs in a separate process, so a crashing plugin can't take the app down.
+The plugin runs in a separate process, so a crashing plugin can't take the app down (it is
+loaded again on the next action, with its default settings). If a plugin's window doesn't
+close when you press Capture, close it yourself — the capture starts then.
 Before capturing, the plugin is reset and warmed up with 1 s of silence, its reported
 latency is compensated, and the test signal is processed twice to check that the plugin
 is deterministic. Shell plugins (like WaveShell) can't be loaded directly — use the DAW route.
@@ -162,6 +164,14 @@ never overwriting anything (`_2`, `_3`, … are appended):
 High distortion → the plugin is non-linear. Low distortion but a high residual → the
 plugin is time-variant (modulation, randomization), the IR was truncated, or misaligned.
 [docs/DSP.md](docs/DSP.md) explains all of this in detail.
+
+### Known limitations of the direct route
+
+* Tested in CI with real VST3s (Dragonfly Reverb, Surge XT Effects) on Windows, macOS and
+  Linux. AUs on macOS still need a real-world test in your plugin folder.
+* On Linux, some plugin editors crash under X11 without a full desktop; use **Generic controls…**.
+* Instruments, plugins that need a running transport/tempo, sidechain or shell plugins
+  (WaveShell) can't be captured directly — use the DAW route.
 
 ## IR formats and IRene
 

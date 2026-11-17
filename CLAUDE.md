@@ -101,25 +101,46 @@ docs/DSP.md (signal design and maths, written for the owner). In one line each:
 
 ## Spike: plugin editor + PySide6 + PyInstaller
 
-The CI job `plugin-spike` (non-blocking) runs the **frozen** app on Windows, macOS arm64 and
-Linux (Xvfb): it downloads Dragonfly Reverb (GPL VST3), opens the editor in the worker
-process, closes it automatically after a few seconds (`spike-editor`), then captures with
-`plugin-capture --editor-seconds 3`. On macOS it also loads Apple's built-in AU
-`AULowpass` from `/System/Library/Components/CoreAudio.component`.
+The build job runs a non-blocking spike on the **frozen** app right after building
+(Windows, macOS arm64, Linux under Xvfb + openbox): it downloads Dragonfly Reverb (GPL,
+DPF-based) and on Windows also Surge XT Effects (JUCE), opens each editor in the worker
+process, closes it after a few seconds (`spike-editor`), then captures with
+`plugin-capture --editor-seconds 3`. `tools/vst3_probe.py` loads the same plugin with plain
+pedalboard for comparison. Results are written to the job summary ("SPIKE RESULTS").
 
-Results: see "Status" below (update after each run).
+Results (Nov 2026, pedalboard 0.9.26, PySide6 6.x, PyInstaller 6.x):
 
-## Status
+| | Windows | macOS arm64 | Linux (Xvfb) |
+|---|---|---|---|
+| worker process (`spawn`) in the frozen app | ✓ | ✓ | ✓ |
+| VST3 load | ✓ after fix ¹ | ✓ | ✓ |
+| editor opens and closes (close event) | ✓ Dragonfly ×2, Surge XT | ✓ Room; Early Reflections hangs ² | ✗ DPF editor crashes (X BadWindow) ³ |
+| capture through the plugin | ✓ | ✓ | ✓ |
+| Dragonfly Early Reflections (LTI) null test | −68.7 dB excellent | (see ²) | −68.7 dB excellent |
+| Dragonfly Room (has modulation) | flagged time-variant, −23 dB | same | same |
+| Apple AU (`AULowpass` in CoreAudio.component) | – | ✗ plain pedalboard hangs too ⁴ | – |
 
-* Done: core, CLI, both routes, GUI, tests (68), CI on 3 OSes, builds for Windows,
-  macOS arm64 + Intel, Linux, self-test of every build.
-* Spike results: _pending first run_.
-* Not yet tested by a person in Cubase/Logic or with real third-party plugins on a desktop.
+1. pedalboard can't scan VST3 *bundle folders* on Windows ("unsupported plugin format or
+   scan failure") but loads the module inside: `resolve_plugin_path()` now does that.
+2. Loads fine; `show_editor(close_event)` then never returns for this one plugin on the
+   macOS runner (the close event is ignored, or the window never comes up headless). The
+   GUI therefore waits for the editor to be closed before capturing, and after 6 s offers
+   "Stop the plugin" (kills the worker; the plugin is reloaded with defaults). Needs a test
+   on a real Mac.
+3. Linux is optional. The crash is contained in the worker; the host reloads the plugin and
+   the capture still works. Use "Generic controls…" on Linux.
+4. Apple's system AUs hang in pedalboard on the headless CI runner; third-party AUs are
+   untested in CI → ask the owner to try a real AU in Logic's plugin folder.
+
+The plugin host survives crashes (reloads the plugin on the next action) and kills workers
+that don't answer within the timeout.
 
 ## Known issues / ideas
 
 * The plugin editor window opens from a separate process, so it may appear behind the main
-  window; it has its own close button.
+  window (and on macOS the worker shows its own Dock icon while the editor is open); it has
+  its own close button.
+* A worker that hangs is killed after the timeout (load 120 s, state 60 s, processing 600 s).
 * Plugins that need a running host transport/tempo or sidechain can't be captured directly.
 * IRene has no true-stereo mode; a separate task in the IRene repo if wanted.
 * Hardware capture (v2): see docs/ARCHITECTURE.md.
