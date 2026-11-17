@@ -137,7 +137,10 @@ class ErrorSpectrumPlot(QWidget):
             self.bands.setText("No null test (verification part missing).")
             return
         apply_theme(self.plot)
-        sel = (nt.spectrum_freqs >= r.session.settings.f_start_hz) & (nt.spectrum_freqs > 0)
+        from ..core.signals import verify_top
+
+        s = r.session.settings
+        sel = (nt.spectrum_freqs >= s.f_start_hz) & (nt.spectrum_freqs <= verify_top(s.effective_f_end_hz))
         self.plot.plot(nt.spectrum_freqs[sel], np.maximum(nt.spectrum_error_db[sel], -160),
                        pen=pg.mkPen(CHANNEL_COLORS[0], width=1.5), name="error")
         for y, c in ((-60, "#2e9d4f"), (-40, "#d48a00"), (-25, "#d0342c")):
