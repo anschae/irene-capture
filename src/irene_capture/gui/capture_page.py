@@ -227,7 +227,7 @@ class DawTab(QWidget):
                         continue
                 session, how = chosen, f"Session chosen by you ({Path(js).name})."
             self.status.emit(f"{p.name}: {how}")
-            jobs.append(file_job(p, session))
+            jobs.append(file_job(p, session, how))
         if jobs:
             self.analyze_requested.emit(jobs)
 

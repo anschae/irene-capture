@@ -154,7 +154,7 @@ jobs:
           merge-multiple: true
       - name: Unpack app
         run: |
-          cd artifact && unzip -q *.zip && ls -la
+          cd artifact && unzip -q *-${{ matrix.platform }}.zip && ls -la
       - name: Linux display
         if: runner.os == 'Linux'
         run: |

@@ -22,10 +22,14 @@ class Job:
     options: AnalysisOptions = field(default_factory=AnalysisOptions)
 
 
-def file_job(path, session: Session) -> Job:
+def file_job(path, session: Session, how: str = "") -> Job:
     from ..core.audio_io import read_audio
+    from ..core.checks import CheckResult, Severity
 
     def produce(opts: AnalysisOptions) -> CaptureResult:
+        if how:
+            sev = Severity.INFO if "most recent" in how or "chosen" in how else Severity.OK
+            opts.extra_checks = [CheckResult("session", sev, how)]
         return analyze(session, read_audio(path), opts)
 
     return Job(str(path), session, produce)
