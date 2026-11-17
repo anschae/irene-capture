@@ -293,7 +293,12 @@ def _worker_loop(cmd_conn, send, note) -> None:  # pragma: no cover - child proc
             if cmd == "quit":
                 send({"ok": True})
                 return
-            if cmd == "names":
+            if cmd == "sleep":  # for tests: simulates a plugin that hangs
+                import time
+
+                time.sleep(float(msg["seconds"]))
+                send({"ok": True})
+            elif cmd == "names":
                 send({"ok": True, "names": _plugin_names(pedalboard, msg["path"], note)})
             elif cmd == "load":
                 path = msg["path"]

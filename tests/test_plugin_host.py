@@ -131,12 +131,8 @@ def test_timeout_kills_worker(monkeypatch):
     try:
         h.load("builtin:Gain:gain_db=-6")
         proc = h._proc
-        # a 'process' call on a huge signal with a tiny timeout
-        import numpy as np
-
         with pytest.raises(PluginError, match="did not respond"):
-            h._call({"cmd": "process", "audio": np.zeros((48000 * 120, 2), np.float32), "sr": 48000.0,
-                     "warmup": 0}, timeout=0.01)
+            h._call({"cmd": "sleep", "seconds": 30}, timeout=1)
         proc.join(5)
         assert not proc.is_alive() and h._proc is None
         # next call starts a new worker and reloads the plugin
