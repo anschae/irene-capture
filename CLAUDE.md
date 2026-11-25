@@ -77,6 +77,10 @@ docs/DSP.md (signal design and maths, written for the owner). In one line each:
   pre-roll mapped through the deconvolution filter. Truncated = end level above −60 dB and
   noise + 10 dB. Not reported for strongly non-linear plugins (the distortion products
   cover the tail).
+* **Cabinet preset: tail trim off by default** (owner's wish, 25 Nov 2026: a 200 ms cab IR
+  came out as 46 ms, which was surprising; fixed-length cab IRs are easier to compare and
+  blend in IRene). Reverb/EQ/Custom keep tail trim on. The setup page says "IR length
+  (max.)" and shows whether the IR may end earlier.
 * **Energy normalization:** mean energy per IR channel = 1, one gain for all channels.
 * **24-bit IR that would clip** is written as float instead (warning).
 * **True stereo default output: two stereo files**, because IRene uses only the first two

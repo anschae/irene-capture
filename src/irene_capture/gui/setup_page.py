@@ -35,6 +35,7 @@ from ..core.presets import (
 )
 from .widgets import CollapsibleSection, MessageLabel
 
+SETTINGS_VERSION = 2  # 2: cabinet preset without tail trim
 STEREO_LABELS = {StereoMode.MONO: "Mono", StereoMode.STEREO: "Stereo (mono in → stereo out)",
                  StereoMode.TRUE_STEREO: "True stereo (L, then R: 4 IRs)"}
 
@@ -68,6 +69,9 @@ class SetupPage(QWidget):
         for r in SAMPLE_RATES:
             self.rate.addItem(f"{r / 1000:g} kHz", r)
         self.length = _spin(0.001, 30.0, 3, 0.05, " s")
+        self.length_hint = QLabel()
+        self.length_hint.setWordWrap(True)
+        self.length_hint.setStyleSheet("color: gray")
         self.length_msg = MessageLabel()
         self.stereo = QComboBox()
         self.ts_out = QComboBox()
@@ -98,7 +102,8 @@ class SetupPage(QWidget):
         self.ir_bits.addItem("24-bit", BitDepth.PCM24.value)
         self.ir_bits.addItem("32-bit float", BitDepth.FLOAT32.value)
         self.trim = QCheckBox("Trim latency (remove silence before the first sound)")
-        self.tail = QCheckBox("Automatic tail trim with fade-out")
+        self.tail = QCheckBox("Automatic tail trim: end the IR where it has died away (with a fade-out)")
+        self.tail.setToolTip("The IR can then be shorter than the IR length. Off: the IR has exactly the IR length.")
         self.norm = QComboBox()
         self.norm.addItem("Off (absolute gain)", Normalization.OFF.value)
         self.norm.addItem("Peak", Normalization.PEAK.value)
@@ -126,7 +131,8 @@ class SetupPage(QWidget):
         form.addRow("Capture type:", self.type)
         form.addRow("Method:", self.method)
         form.addRow("Sample rate:", self.rate)
-        form.addRow("IR length:", self.length)
+        form.addRow("IR length (max.):", self.length)
+        form.addRow("", self.length_hint)
         form.addRow("", self.length_msg)
         form.addRow("Channels:", self.stereo)
         form.addRow(self.ts_label, self.ts_out)
@@ -256,6 +262,9 @@ class SetupPage(QWidget):
         self.ts_out.setVisible(ts)
         self.ts_label.setVisible(ts)
         self.sweep_len.setEnabled(s.method == Method.SWEEP)
+        self.length_hint.setText(
+            "The IR may end earlier: automatic tail trim is on (Advanced)." if s.tail_trim else
+            "The IR will have exactly this length (automatic tail trim is off).")
         msgs = validate(s)
         self.length_msg.set_messages([m for m in msgs if m.field == "ir_length_s"])
         self.messages.set_messages([m for m in msgs if m.field != "ir_length_s"])
@@ -273,6 +282,7 @@ class SetupPage(QWidget):
     # --- persistence --------------------------------------------------------------------
     def _save(self) -> None:
         self.qs.setValue("setup/settings", json.dumps(self.settings().to_dict()))
+        self.qs.setValue("setup/version", SETTINGS_VERSION)
         self.qs.setValue("paths/output", self.out_dir.text())
 
     def _restore(self) -> None:
@@ -281,5 +291,7 @@ class SetupPage(QWidget):
             s = CaptureSettings.from_dict(json.loads(raw)) if raw else CaptureSettings.for_type("cabinet")
         except (ValueError, TypeError, KeyError):
             s = CaptureSettings.for_type("cabinet")
+        if int(self.qs.value("setup/version", 1) or 1) < 2 and s.capture_type == CaptureType.CABINET:
+            s.tail_trim = False  # v0.1.0 had tail trim on for cabinets; the new default is off
         self.out_dir.setText(str(self.qs.value("paths/output", "") or (Path.home() / "irene-capture")))
         self.apply(s)

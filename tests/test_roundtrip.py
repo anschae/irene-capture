@@ -185,3 +185,11 @@ def test_nonlinear_ir_starts_at_zero():
     assert res.ir_start >= 0
     peak = np.argmax(np.max(np.abs(res.ir[0]), axis=0))
     assert peak < int(0.002 * SR)  # the main (linear) part is in the IR
+
+
+def test_cabinet_ir_has_exactly_the_chosen_length():
+    _, res = capture("cabinet", T.LTIPlugin(T.cab_ir()))
+    assert res.length_samples == int(0.2 * SR)
+    assert not any(c.id == "tail_trim" for c in res.checks)
+    _, trimmed = capture("cabinet", T.LTIPlugin(T.cab_ir()), settings={"tail_trim": True})
+    assert trimmed.length_samples < int(0.2 * SR)

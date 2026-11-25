@@ -70,6 +70,7 @@ class Preset:
     long_hint: str  # why a long IR is a problem for this type
     typical: str  # typical range, shown in messages
     noun: str = "this capture"  # with article, for messages
+    tail_trim: bool = True  # automatic tail trim on by default
     seconds: bool = False  # show lengths in seconds rather than ms
 
 
@@ -87,6 +88,7 @@ PRESETS: dict[CaptureType, Preset] = {
         long_hint="The extra length only adds noise and CPU load in the IR loader.",
         typical="typical cabinet IRs are 50–500 ms",
         noun="a cabinet",
+        tail_trim=False,  # cab IRs of a fixed length are easier to compare and blend
     ),
     CaptureType.REVERB: Preset(
         CaptureType.REVERB,
@@ -167,6 +169,7 @@ class CaptureSettings:
             stereo_mode=preset.default_stereo_mode,
             trim_latency=preset.trim_latency,
             normalization=preset.normalization,
+            tail_trim=preset.tail_trim,
         )
         return replace(s, **overrides) if overrides else s
 

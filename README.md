@@ -60,20 +60,22 @@ The builds are not signed with a paid Apple/Microsoft certificate, so the system
 | **Capture type** | a preset with sensible defaults (table below). Every value stays editable. |
 | **Method** | *Exponential sine sweep* (default; also measures distortion) or *Dirac impulse*. |
 | **Sample rate** | 44.1 / 48 / 88.2 / 96 / 192 kHz. The DAW project must use the same rate. |
-| **IR length** | how long the IR may be. A warning appears if the value is unusual for the type. |
+| **IR length (max.)** | how long the IR may be. With automatic tail trim (see below) it can end earlier; without, it has exactly this length. A warning appears if the value is unusual for the type. |
 | **Channels** | reverb and custom: *Stereo* (mono in → stereo out), *True stereo* or *Mono*. |
 | **Output folder** | where test files are suggested and direct-route IRs are written. |
 
-| type | channels | IR length | trim latency | normalization |
-|---|---|---|---|---|
-| Cabinet | mono | 200 ms | on | energy |
-| Reverb | stereo | 4 s | off (keeps pre-delay) | energy |
-| EQ / Filter | mono | 250 ms | off (linear-phase EQs pre-ring) | off (absolute gain) |
-| Custom | mono/stereo | 1 s | your choice | your choice |
+| type | channels | IR length | trim latency | tail trim | normalization |
+|---|---|---|---|---|---|
+| Cabinet | mono | 200 ms | on | off (exactly 200 ms) | energy |
+| Reverb | stereo | 4 s | off (keeps pre-delay) | on | energy |
+| EQ / Filter | mono | 250 ms | off (linear-phase EQs pre-ring) | on | off (absolute gain) |
+| Custom | mono/stereo | 1 s | your choice | on | your choice |
 
 **Advanced:** sweep length (6 s) and range (20 Hz – 0.95 × Nyquist), test level (−6 dBFS),
 test-file format (32-bit float recommended), IR format (24-bit or 32-bit float), trim
-latency, automatic tail trim with fade-out, normalization (off / peak / energy).
+latency, automatic tail trim (ends the IR where it has died away — below −100 dB or the
+plugin's noise floor — with a fade-out, so the IR can be shorter than the IR length),
+normalization (off / peak / energy).
 Settings and folders are remembered.
 
 **True stereo** plays the test sequence on the left channel only, then on the right only,

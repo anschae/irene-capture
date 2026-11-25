@@ -19,7 +19,9 @@ from irene_capture.core.signals import exp_sweep, pink_noise, verify_signal
 
 
 def test_presets_defaults():
-    assert CaptureSettings.for_type("cabinet").ir_length_s == 0.2
+    cab = CaptureSettings.for_type("cabinet")
+    assert cab.ir_length_s == 0.2 and not cab.tail_trim  # cab IRs keep exactly the chosen length
+    assert CaptureSettings.for_type("reverb").tail_trim and CaptureSettings.for_type("eq").tail_trim
     r = CaptureSettings.for_type("reverb")
     assert r.stereo_mode == StereoMode.STEREO and r.ir_length_s == 4.0 and not r.trim_latency
     eq = CaptureSettings.for_type("eq")
